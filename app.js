@@ -1,348 +1,277 @@
 function app() {
     return {
-        // Estado de la aplicación
+        // Variables de estado
         newBlogUrl: '',
         blogs: [],
         posts: [],
-        isLoading: false,
-        isAddingBlog: false,
-        message: '',
-        messageType: '',
+        loading: false,
+        errorMessage: '',
+        successMessage: '',
+        workerUrl: 'https://proto-nexus.marcosba.workers.dev',
         
         // Inicialización
         async init() {
-            console.log('Proto-Nexus iniciando...');
-            
-            // Cargar blogs guardados
-            this.loadSavedBlogs();
-            
-            // Cargar posts si hay blogs
+            this.loadBlogsFromStorage();
             if (this.blogs.length > 0) {
                 await this.loadAllFeeds();
             }
             
-            // Configurar recarga automática cada 15 minutos
-            setInterval(() => {
-                if (this.blogs.length > 0) {
-                    this.loadAllFeeds();
-                }
-            }, 15 * 60 * 1000);
-            
-            console.log('Aplicación lista');
+            // Auto-recargar cada 10 minutos
+            setInterval(() => this.loadAllFeeds(), 10 * 60 * 1000);
         },
         
         // Cargar blogs desde localStorage
-        loadSavedBlogs() {
-            try {
-                const saved = localStorage.getItem('protoNexus_blogs');
-                if (saved) {
-                    this.blogs = JSON.parse(saved);
-                    console.log(`Cargados ${this.blogs.length} blogs desde localStorage`);
-                }
-            } catch (error) {
-                console.error('Error cargando blogs:', error);
-                this.blogs = [];
+        loadBlogsFromStorage() {
+            const saved = localStorage.getItem('protoNexus_blogs');
+            if (saved) {
+                this.blogs = JSON.parse(saved);
             }
         },
         
         // Guardar blogs en localStorage
         saveBlogs() {
-            try {
-                localStorage.setItem('protoNexus_blogs', JSON.stringify(this.blogs));
-            } catch (error) {
-                console.error('Error guardando blogs:', error);
-            }
+            localStorage.setItem('protoNexus_blogs', JSON.stringify(this.blogs));
         },
         
         // Añadir un nuevo blog
         async addBlog() {
             if (!this.newBlogUrl.trim()) {
-                this.showMessage('Por favor, introduce una URL', 'error');
+                this.showError('Por favor, introduce una URL');
                 return;
             }
             
-            this.isAddingBlog = true;
-            this.message = '';
+            this.loading = true;
+            this.clearMessages();
             
             try {
-                // Normalizar URL
                 let blogUrl = this.newBlogUrl.trim();
-                if (!blogUrl.startsWith('http')) {
+                
+                // Asegurar que la URL tenga protocolo
+                if (!blogUrl.startsWith('http://') && !blogUrl.startsWith('https://')) {
                     blogUrl = 'https://' + blogUrl;
                 }
                 
-                // Verificar si ya existe
-                if (this.blogs.some(b => b.url === blogUrl)) {
-                    this.showMessage('Este blog ya está en tu lista', 'error');
-                    this.isAddingBlog = false;
-                    return;
-                }
-                
-                // Buscar feed RSS
-                this.showMessage('Buscando feed RSS...', '');
-                
+                // Paso 1: Descubrir el feed RSS
+                this.showSuccess('Buscando feed RSS...');
                 const feedInfo = await this.discoverFeed(blogUrl);
                 
-                if (!feedInfo || !feedInfo.feedUrl) {
-                    this.showMessage('No se pudo encontrar un feed RSS en este blog. Intenta con la URL completa del feed si la conoces.', 'error');
-                    this.isAddingBlog = false;
+                if (!feedInfo.found) {
+                    this.showError(`No se pudo encontrar un feed RSS. Intenté: ${feedInfo.tried.join(', ')}`);
+                    this.loading = false;
                     return;
                 }
                 
-                // Crear objeto blog
+                // Paso 2: Obtener información del blog desde el feed
+                this.showSuccess('Obteniendo información del blog...');
+                const blogInfo = await this.getBlogInfo(feedInfo.url);
+                
+                if (!blogInfo) {
+                    this.showError('No se pudo obtener información del feed');
+                    this.loading = false;
+                    return;
+                }
+                
+                // Crear objeto del blog
                 const blog = {
                     id: Date.now() + Math.random(),
                     url: blogUrl,
-                    feedUrl: feedInfo.feedUrl,
-                    title: feedInfo.title || this.extractDomain(blogUrl),
-                    addedAt: new Date().toISOString()
+                    feedUrl: feedInfo.url,
+                    title: blogInfo.title || this.extractDomain(blogUrl),
+                    lastUpdated: new Date().toISOString()
                 };
                 
+                // Verificar si ya existe
+                if (this.blogs.some(b => b.feedUrl === blog.feedUrl)) {
+                    this.showError('Este blog ya está en tu lista');
+                    this.loading = false;
+                    return;
+                }
+                
                 // Añadir a la lista
-                this.blogs.unshift(blog);
+                this.blogs.push(blog);
                 this.saveBlogs();
                 
                 // Limpiar y mostrar éxito
                 this.newBlogUrl = '';
-                this.showMessage(`¡Blog añadido! Encontrado: ${feedInfo.title || 'Feed RSS'}`, 'success');
+                this.showSuccess(`¡Blog "${blog.title}" añadido correctamente!`);
                 
-                // Cargar posts de este blog
-                await this.loadFeed(blog);
+                // Cargar posts del nuevo blog
+                await this.loadFeed(blog.feedUrl);
                 
             } catch (error) {
                 console.error('Error añadiendo blog:', error);
-                this.showMessage(`Error: ${error.message}`, 'error');
+                this.showError('Error al procesar el blog: ' + error.message);
             } finally {
-                this.isAddingBlog = false;
-                
-                // Auto-ocultar mensaje después de 5 segundos
-                if (this.message) {
-                    setTimeout(() => {
-                        this.message = '';
-                    }, 5000);
-                }
+                this.loading = false;
             }
         },
         
-        // Método MEJORADO para descubrir feeds RSS
+        // Método mejorado para descubrir feeds RSS
         async discoverFeed(blogUrl) {
-            console.log(`Buscando feed para: ${blogUrl}`);
-            
-            // Lista COMPLETA de posibles ubicaciones de feeds
-            const possibleFeedPaths = [
-                // Comunes
+            const commonFeeds = [
                 '/feed',
-                '/feeds/posts/default',  // Blogger estándar
-                '/feeds/posts/default?alt=rss', // Blogger alternativo
-                '/atom.xml',
+                '/feeds/posts/default', // Blogger específico
+                '/feed/rss',
                 '/rss',
                 '/rss.xml',
-                '/rss2.xml',
-                '/feed.xml',
+                '/atom.xml',
                 '/index.xml',
-                // WordPress común
-                '/feed/rss',
-                '/feed/rss2',
-                '/feed/atom',
-                '/?feed=rss',
+                '/feed.xml',
                 '/?feed=rss2',
-                '/?feed=atom',
-                // Tumblr
-                '/rss',
-                // Medium (si permite)
-                '/feed/',
-                // Substack
-                '/feed',
-                // Específicos de plataformas
-                '/blog/feed',
-                '/posts/feed',
-                '/news/feed',
-                // Directorios alternativos
-                '/feed/rss/',
-                '/index.rss',
-                '/.rss',
-                // Sin barra inicial
-                'feed',
-                'rss',
-                'atom.xml'
+                '/?feed=rss',
+                '/feed/atom'
             ];
             
             // Primero intentar obtener la página y buscar links RSS en el HTML
             try {
-                const pageResponse = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(blogUrl)}`);
-                if (pageResponse.ok) {
-                    const pageData = await pageResponse.json();
-                    const html = pageData.contents;
+                const response = await fetch(`${this.workerUrl}/?mode=html&url=${encodeURIComponent(blogUrl)}`);
+                if (response.ok) {
+                    const html = await response.text();
                     
-                    // Buscar enlaces RSS en el HTML (más efectivo)
+                    // Buscar links RSS en el HTML
                     const rssLinks = this.findRssLinksInHtml(html, blogUrl);
                     if (rssLinks.length > 0) {
-                        console.log('Enlaces RSS encontrados en HTML:', rssLinks);
-                        
-                        // Probar cada enlace encontrado
+                        // Probar cada link encontrado
                         for (const link of rssLinks) {
-                            const isValid = await this.testFeedUrl(link);
-                            if (isValid) {
-                                const title = this.extractTitleFromHtml(html) || this.extractDomain(blogUrl);
-                                return { feedUrl: link, title: title };
+                            if (await this.testFeedUrl(link)) {
+                                return { found: true, url: link, tried: ['HTML discovery'] };
                             }
                         }
                     }
-                    
-                    // Si no encontramos en HTML, extraer título de la página
-                    const pageTitle = this.extractTitleFromHtml(html) || this.extractDomain(blogUrl);
-                    
-                    // Probar paths comunes usando el dominio base
-                    const baseUrl = blogUrl.replace(/\/$/, '');
-                    const testedUrls = new Set();
-                    
-                    for (const path of possibleFeedPaths) {
-                        let testUrl;
-                        
-                        if (path.startsWith('/') || path.startsWith('?')) {
-                            testUrl = baseUrl + path;
-                        } else if (path.includes('://')) {
-                            testUrl = path;
-                        } else {
-                            testUrl = baseUrl + '/' + path;
-                        }
-                        
-                        // Evitar probar la misma URL dos veces
-                        if (testedUrls.has(testUrl)) continue;
-                        testedUrls.add(testUrl);
-                        
-                        console.log(`Probando: ${testUrl}`);
-                        
-                        const isValid = await this.testFeedUrl(testUrl);
-                        if (isValid) {
-                            return { feedUrl: testUrl, title: pageTitle };
-                        }
-                        
-                        // Pequeña pausa para no saturar
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                    }
                 }
-            } catch (error) {
-                console.warn('Error analizando página:', error);
+            } catch (e) {
+                console.log('No se pudo analizar HTML, continuando con métodos estándar');
             }
             
-            // Si todo falla, intentar con la API AllOrigins para feeds directos
-            const directFeedUrl = `${blogUrl}/feed`;
-            const isValidDirect = await this.testFeedUrl(directFeedUrl);
-            if (isValidDirect) {
-                return { feedUrl: directFeedUrl, title: this.extractDomain(blogUrl) };
+            // Si no se encuentra en HTML, probar las rutas comunes
+            const tried = [];
+            for (const feedPath of commonFeeds) {
+                const feedUrl = blogUrl.replace(/\/$/, '') + feedPath;
+                tried.push(feedPath);
+                
+                if (await this.testFeedUrl(feedUrl)) {
+                    return { found: true, url: feedUrl, tried };
+                }
             }
             
-            return null;
+            return { found: false, tried };
         },
         
-        // Buscar enlaces RSS en HTML
+        // Buscar links RSS en el HTML
         findRssLinksInHtml(html, baseUrl) {
             const links = [];
             
-            // Patrones para encontrar feeds
-            const patterns = [
-                /<link[^>]*type=["'](application\/rss\+xml|application\/atom\+xml|application\/xml|text\/xml)["'][^>]*href=["']([^"']+)["']/gi,
-                /<link[^>]*href=["']([^"']+\.(rss|xml|atom))["'][^>]*type=["'](application\/rss\+xml|application\/atom\+xml)["']/gi,
-                /<a[^>]*href=["']([^"']+\.(rss|xml|atom))["'][^>]*>.*?RSS.*?<\/a>/gi,
-                /<a[^>]*href=["']([^"']*feed[^"']*)["'][^>]*>.*?(RSS|Atom|Feed).*?<\/a>/gi
-            ];
+            // Buscar <link> tags con type="application/rss+xml" o "application/atom+xml"
+            const linkRegex = /<link[^>]+(?:type=["'](?:application\/rss\+xml|application\/atom\+xml)["'][^>]+href=["']([^"']+)["']|href=["']([^"']+)["'][^>]+type=["'](?:application\/rss\+xml|application\/atom\+xml)["'])[^>]*>/gi;
             
-            for (const pattern of patterns) {
-                let match;
-                while ((match = pattern.exec(html)) !== null) {
-                    let url = match[2] || match[1];
-                    
-                    // Convertir URL relativa a absoluta
-                    if (url.startsWith('/')) {
-                        const base = new URL(baseUrl);
-                        url = base.origin + url;
-                    } else if (!url.includes('://')) {
-                        const base = new URL(baseUrl);
-                        url = base.origin + '/' + url.replace(/^\//, '');
-                    }
-                    
-                    if (!links.includes(url)) {
-                        links.push(url);
-                    }
+            let match;
+            while ((match = linkRegex.exec(html)) !== null) {
+                const href = match[1] || match[2];
+                if (href) {
+                    const absoluteUrl = this.makeAbsoluteUrl(href, baseUrl);
+                    links.push(absoluteUrl);
+                }
+            }
+            
+            // Buscar <a> tags que mencionen RSS
+            const aRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(?:RSS|Feed|Atom|XML)[^<]*<\/a>/gi;
+            while ((match = aRegex.exec(html)) !== null) {
+                const href = match[1];
+                const absoluteUrl = this.makeAbsoluteUrl(href, baseUrl);
+                if (!links.includes(absoluteUrl)) {
+                    links.push(absoluteUrl);
                 }
             }
             
             return links;
         },
         
-        // Extraer título del HTML
-        extractTitleFromHtml(html) {
-            const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
-            if (titleMatch && titleMatch[1]) {
-                return titleMatch[1].trim().replace(/[\r\n]/g, ' ');
+        // Convertir URL relativa a absoluta
+        makeAbsoluteUrl(url, baseUrl) {
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+                return url;
+            }
+            
+            const base = new URL(baseUrl);
+            if (url.startsWith('/')) {
+                return `${base.origin}${url}`;
+            } else {
+                return `${base.origin}/${url}`;
+            }
+        },
+        
+        // Probar si una URL de feed es válida
+        async testFeedUrl(feedUrl) {
+            try {
+                const response = await fetch(`${this.workerUrl}/?url=${encodeURIComponent(feedUrl)}&test=true`);
+                if (response.ok) {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && (
+                        contentType.includes('xml') || 
+                        contentType.includes('rss') || 
+                        contentType.includes('atom')
+                    )) {
+                        return true;
+                    }
+                    
+                    // Leer un poco del contenido para ver si parece XML
+                    const text = await response.text();
+                    if (text.trim().startsWith('<?xml') || text.includes('<rss') || text.includes('<feed')) {
+                        return true;
+                    }
+                }
+                return false;
+            } catch (error) {
+                return false;
+            }
+        },
+        
+        // Obtener información del blog desde el feed
+        async getBlogInfo(feedUrl) {
+            try {
+                const response = await fetch(`${this.workerUrl}/?url=${encodeURIComponent(feedUrl)}&mode=info`);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data;
+                }
+            } catch (error) {
+                console.error('Error obteniendo info del feed:', error);
             }
             return null;
         },
         
-        // Probar si una URL de feed es válida
-        async testFeedUrl(url) {
+        // Cargar un feed específico
+        async loadFeed(feedUrl) {
             try {
-                // Usar proxy CORS
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-                const response = await fetch(proxyUrl, { 
-                    method: 'GET',
-                    headers: { 'Accept': 'application/xml, application/rss+xml, application/atom+xml' }
-                });
-                
-                if (!response.ok) return false;
+                const response = await fetch(`${this.workerUrl}/?url=${encodeURIComponent(feedUrl)}`);
+                if (!response.ok) throw new Error('Error del servidor');
                 
                 const data = await response.json();
-                const content = data.contents;
                 
-                // Verificar si es XML/RSS válido
-                if (content.includes('<rss') || 
-                    content.includes('<feed') || 
-                    content.includes('<rdf:RDF') ||
-                    content.includes('<?xml')) {
-                    return true;
+                if (data.posts && data.posts.length > 0) {
+                    const blog = this.blogs.find(b => b.feedUrl === feedUrl);
+                    const blogTitle = blog ? blog.title : this.extractDomain(feedUrl);
+                    
+                    // Añadir posts al feed global
+                    const newPosts = data.posts.map(post => ({
+                        ...post,
+                        id: post.link + post.date,
+                        blogTitle: blogTitle,
+                        blogUrl: blog ? blog.url : feedUrl
+                    }));
+                    
+                    this.posts = [...newPosts, ...this.posts]
+                        .filter((post, index, self) => 
+                            index === self.findIndex(p => p.id === post.id)
+                        )
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .slice(0, 100); // Limitar a 100 posts
                 }
                 
-                return false;
+                return true;
             } catch (error) {
-                console.warn(`Error probando feed ${url}:`, error.message);
+                console.error('Error cargando feed:', feedUrl, error);
                 return false;
-            }
-        },
-        
-        // Cargar un feed individual
-        async loadFeed(blog) {
-            try {
-                console.log(`Cargando feed: ${blog.feedUrl}`);
-                
-                // Usar proxy para evitar CORS
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(blog.feedUrl)}`;
-                const response = await fetch(proxyUrl);
-                
-                if (!response.ok) {
-                    console.warn(`Error cargando feed ${blog.feedUrl}: ${response.status}`);
-                    return [];
-                }
-                
-                const data = await response.json();
-                const xml = data.contents;
-                
-                // Parsear el feed
-                const feedPosts = this.parseFeed(xml, blog);
-                
-                // Añadir posts al feed general
-                this.posts = [...feedPosts, ...this.posts]
-                    .filter((post, index, self) => 
-                        index === self.findIndex(p => p.link === post.link)
-                    )
-                    .sort((a, b) => new Date(b.date) - new Date(a.date))
-                    .slice(0, 100); // Limitar a 100 posts máximo
-                
-                return feedPosts;
-                
-            } catch (error) {
-                console.error(`Error cargando feed ${blog.feedUrl}:`, error);
-                return [];
             }
         },
         
@@ -350,108 +279,47 @@ function app() {
         async loadAllFeeds() {
             if (this.blogs.length === 0) return;
             
-            this.isLoading = true;
-            this.posts = []; // Limpiar posts anteriores
-            
-            console.log(`Cargando ${this.blogs.length} feeds...`);
-            
-            // Cargar feeds en paralelo (con límite)
-            const promises = this.blogs.map(blog => this.loadFeed(blog));
-            const results = await Promise.allSettled(promises);
-            
-            // Contar resultados
-            const successful = results.filter(r => r.status === 'fulfilled').length;
-            console.log(`Carga completada: ${successful}/${this.blogs.length} feeds cargados`);
-            
-            this.isLoading = false;
-        },
-        
-        // Parsear feed RSS/Atom
-        parseFeed(xml, blog) {
-            const posts = [];
+            this.loading = true;
+            this.clearMessages();
             
             try {
-                // Intentar como RSS
-                let items = xml.match(/<item>[\s\S]*?<\/item>/gi);
+                const promises = this.blogs.map(blog => this.loadFeed(blog.feedUrl));
+                await Promise.all(promises);
                 
-                if (!items) {
-                    // Intentar como Atom
-                    items = xml.match(/<entry>[\s\S]*?<\/entry>/gi);
-                }
-                
-                if (!items) {
-                    // Intentar como RDF
-                    items = xml.match(/<rss:item>[\s\S]*?<\/rss:item>/gi) || 
-                            xml.match(/<item rdf:about[^>]*>[\s\S]*?<\/item>/gi);
-                }
-                
-                if (items) {
-                    for (const item of items.slice(0, 20)) { // Limitar a 20 posts por feed
-                        const post = {
-                            id: blog.id + '_' + Date.now() + Math.random(),
-                            blogUrl: blog.url,
-                            blogTitle: blog.title,
-                            title: this.extractFromXml(item, ['title', 'dc:title']),
-                            link: this.extractFromXml(item, ['link', 'guid']),
-                            date: this.extractFromXml(item, ['pubDate', 'dc:date', 'published', 'updated']),
-                            author: this.extractFromXml(item, ['dc:creator', 'author', 'name']),
-                            excerpt: this.extractFromXml(item, ['description', 'content:encoded', 'summary', 'content'])
-                        };
-                        
-                        // Limpiar y formatear
-                        post.excerpt = this.cleanHtml(post.excerpt || '').substring(0, 300) + '...';
-                        post.date = post.date || new Date().toISOString();
-                        
-                        // Solo añadir si tiene link
-                        if (post.link && post.link.startsWith('http')) {
-                            posts.push(post);
-                        }
-                    }
-                }
+                this.showSuccess(`${this.posts.length} posts cargados`);
             } catch (error) {
-                console.error('Error parseando feed:', error);
+                console.error('Error cargando feeds:', error);
+                this.showError('Error cargando algunos feeds');
+            } finally {
+                this.loading = false;
             }
+        },
+        
+        // Eliminar suscripción
+        unsubscribe(blogId) {
+            this.blogs = this.blogs.filter(b => b.id !== blogId);
+            this.saveBlogs();
             
-            return posts;
+            // Filtrar posts de ese blog
+            this.posts = this.posts.filter(p => {
+                const blog = this.blogs.find(b => b.title === p.blogTitle);
+                return blog !== undefined;
+            });
+            
+            this.showSuccess('Blog eliminado');
         },
         
-        // Extraer contenido de XML
-        extractFromXml(xml, tags) {
-            for (const tag of tags) {
-                const pattern = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\/${tag}>`, 'i');
-                const match = xml.match(pattern);
-                if (match && match[1]) {
-                    return this.cleanText(match[1].trim());
-                }
+        // Funciones de utilidad
+        extractDomain(url) {
+            try {
+                const domain = new URL(url).hostname;
+                return domain.replace('www.', '');
+            } catch {
+                return url.replace(/^https?:\/\//, '').split('/')[0];
             }
-            return '';
         },
         
-        // Limpiar texto
-        cleanText(text) {
-            return text
-                .replace(/<!\[CDATA\[(.*?)\]\]>/gi, '$1')
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/<[^>]*>/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-        },
-        
-        // Limpiar HTML (más seguro)
-        cleanHtml(html) {
-            const temp = document.createElement('div');
-            temp.innerHTML = html;
-            return temp.textContent || temp.innerText || '';
-        },
-        
-        // Formatear fecha
         formatDate(dateString) {
-            if (!dateString) return 'Fecha desconocida';
-            
             try {
                 const date = new Date(dateString);
                 return date.toLocaleDateString('es-ES', {
@@ -459,41 +327,53 @@ function app() {
                     month: 'long',
                     day: 'numeric'
                 });
-            } catch (error) {
-                return dateString;
-            }
-        },
-        
-        // Extraer dominio de URL
-        extractDomain(url) {
-            try {
-                const domain = new URL(url).hostname;
-                return domain.replace(/^www\./, '');
             } catch {
-                return url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+                return dateString || 'Fecha desconocida';
             }
         },
         
-        // Remover blog
-        removeBlog(blogId) {
-            this.blogs = this.blogs.filter(b => b.id !== blogId);
-            this.saveBlogs();
-            
-            // Recargar posts sin el blog eliminado
-            if (this.blogs.length > 0) {
-                this.loadAllFeeds();
-            } else {
-                this.posts = [];
-            }
-            
-            this.showMessage('Blog eliminado', 'success');
+        showError(message) {
+            this.errorMessage = message;
+            this.successMessage = '';
+            setTimeout(() => this.errorMessage = '', 5000);
         },
         
-        // Mostrar mensajes
-        showMessage(text, type) {
-            this.message = text;
-            this.messageType = type === 'error' ? 'error-message' : 
-                              type === 'success' ? 'success-message' : '';
+        showSuccess(message) {
+            this.successMessage = message;
+            this.errorMessage = '';
+            setTimeout(() => this.successMessage = '', 5000);
+        },
+        
+        clearMessages() {
+            this.errorMessage = '';
+            this.successMessage = '';
+        },
+        
+        // Función para probar con blogs de ejemplo
+        async testDefaultBlogs() {
+            this.clearMessages();
+            this.showSuccess('Añadiendo blogs de ejemplo...');
+            
+            const exampleBlogs = [
+                'https://blogger.googleblog.com',
+                'https://wordpress.com/blog',
+                'https://news.ycombinator.com'
+            ];
+            
+            for (const blogUrl of exampleBlogs) {
+                this.newBlogUrl = blogUrl;
+                await this.addBlog();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
         }
     };
+}
+
+// Inicializar la aplicación cuando el DOM esté listo
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        window.appInstance = app();
+    });
+} else {
+    window.appInstance = app();
 }
