@@ -1,43 +1,408 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Proto-Nexus - Tu red de blogs</title>
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body x-data="app()" x-init="init()">
-    <div class="container">
-        <!-- Sidebar: Añadir blogs y suscripciones -->
-        <div class="sidebar">
-            <h3>+ Añadir Blog</h3>
-            <input x-model="newBlogUrl" placeholder="URL del blog (ej: mi-blog.blogspot.com)">
-            <button @click="addBlog()">Añadir</button>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+            --border: #e2e8f0;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            background: var(--card);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--primary);
+        }
+        
+        .add-blog-section {
+            background: #f1f5f9;
+            padding: 1.25rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+        }
+        
+        .input-group {
+            margin-bottom: 1rem;
+        }
+        
+        .input-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .input-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .btn-primary {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .blogs-list {
+            margin-top: 1rem;
+        }
+        
+        .blog-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            transition: transform 0.2s;
+        }
+        
+        .blog-item:hover {
+            transform: translateX(5px);
+            border-color: var(--primary);
+        }
+        
+        .blog-title {
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+        
+        .remove-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+        }
+        
+        /* Feed Principal */
+        .feed-container {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+        
+        .feed-header {
+            margin-bottom: 2rem;
+        }
+        
+        .feed-header h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .feed-header .subtitle {
+            color: #64748b;
+            font-size: 1rem;
+        }
+        
+        .posts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .post-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: box-shadow 0.2s, transform 0.2s;
+        }
+        
+        .post-card:hover {
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .post-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+        
+        .post-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+            line-height: 1.3;
+        }
+        
+        .post-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+        
+        .author-link {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .author-link:hover {
+            text-decoration: underline;
+        }
+        
+        .post-excerpt {
+            color: #475569;
+            line-height: 1.7;
+            margin-bottom: 1rem;
+        }
+        
+        .read-more {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .read-more:hover {
+            text-decoration: underline;
+        }
+        
+        /* Estados y utilidades */
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #64748b;
+        }
+        
+        .error-message {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #dc2626;
+            padding: 1rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+        }
+        
+        .success-message {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #16a34a;
+            padding: 1rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #64748b;
+        }
+        
+        .empty-state h3 {
+            margin-bottom: 0.5rem;
+            color: #475569;
+        }
+        
+        @media (max-width: 768px) {
+            .app-container {
+                flex-direction: column;
+            }
             
-            <h3>Tus Blogs</h3>
-            <template x-for="blog in blogs" :key="blog.id">
-                <div class="blog-item">
-                    <span x-text="blog.title"></span>
-                    <button @click="unsubscribe(blog.id)">×</button>
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: static;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            
+            .feed-container {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container" x-data="app()" x-init="init()">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">Proto-Nexus</div>
+            
+            <div class="add-blog-section">
+                <h3 style="margin-bottom: 1rem; color: var(--text);">+ Añadir Blog</h3>
+                
+                <div class="input-group">
+                    <label for="blog-url">URL del Blog</label>
+                    <input 
+                        type="text" 
+                        id="blog-url"
+                        x-model="newBlogUrl"
+                        placeholder="https://ejemplo.blogspot.com o https://ejemplo.wordpress.com"
+                        @keyup.enter="addBlog()"
+                    >
                 </div>
-            </template>
-        </div>
-
-        <!-- Feed principal -->
-        <div class="feed">
-            <h1>Proto-Nexus</h1>
-            <template x-for="post in posts" :key="post.id">
-                <article class="post">
-                    <h2 x-text="post.title"></h2>
-                    <div class="meta">
-                        <a :href="post.blogUrl" x-text="post.author"></a> · 
-                        <span x-text="new Date(post.date).toLocaleDateString()"></span>
+                
+                <button 
+                    class="btn-primary" 
+                    @click="addBlog()"
+                    :disabled="isAddingBlog"
+                >
+                    <span x-show="!isAddingBlog">Añadir Blog</span>
+                    <span x-show="isAddingBlog" style="display: none;">Buscando RSS...</span>
+                </button>
+                
+                <!-- Mensajes de estado -->
+                <div x-show="message" :class="messageType" x-text="message" style="display: none;"></div>
+            </div>
+            
+            <!-- Lista de blogs -->
+            <div class="blogs-list">
+                <h3 style="margin-bottom: 1rem; color: var(--text);">Tus Blogs</h3>
+                
+                <div x-show="blogs.length === 0" class="empty-state" style="padding: 1rem;">
+                    <p>No hay blogs añadidos aún.</p>
+                    <p style="font-size: 0.9rem; margin-top: 0.5rem;">Añade tu primer blog para empezar.</p>
+                </div>
+                
+                <template x-for="blog in blogs" :key="blog.id">
+                    <div class="blog-item">
+                        <span class="blog-title" x-text="blog.title || blog.url"></span>
+                        <button 
+                            class="remove-btn" 
+                            @click="removeBlog(blog.id)"
+                            title="Eliminar blog"
+                        >
+                            ×
+                        </button>
                     </div>
-                    <div x-html="post.excerpt"></div>
-                    <a :href="post.link" target="_blank">Leer completo →</a>
-                </article>
-            </template>
+                </template>
+            </div>
+        </div>
+        
+        <!-- Feed Principal -->
+        <div class="feed-container">
+            <div class="feed-header">
+                <h1>Feed de Blogs</h1>
+                <p class="subtitle">
+                    <span x-text="blogs.length"></span> blogs · 
+                    <span x-text="posts.length"></span> posts
+                </p>
+            </div>
+            
+            <!-- Estado de carga -->
+            <div x-show="isLoading && posts.length === 0" class="loading">
+                <p>Cargando posts...</p>
+            </div>
+            
+            <!-- Sin posts -->
+            <div x-show="!isLoading && posts.length === 0" class="empty-state">
+                <h3>No hay posts para mostrar</h3>
+                <p>Añade algunos blogs para ver sus publicaciones aquí.</p>
+            </div>
+            
+            <!-- Posts -->
+            <div class="posts-container" x-show="posts.length > 0">
+                <template x-for="post in posts" :key="post.id">
+                    <article class="post-card">
+                        <div class="post-header">
+                            <div style="flex: 1;">
+                                <h2 class="post-title" x-text="post.title || 'Sin título'"></h2>
+                                <div class="post-meta">
+                                    <a :href="post.blogUrl" class="author-link" target="_blank" x-text="post.author || 'Autor desconocido'"></a>
+                                    <span>·</span>
+                                    <span x-text="formatDate(post.date)"></span>
+                                    <span>·</span>
+                                    <span x-text="post.blogTitle || 'Blog'"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="post-excerpt" x-html="post.excerpt || post.content || 'Sin contenido'"></div>
+                        
+                        <a :href="post.link" class="read-more" target="_blank">
+                            Leer artículo completo
+                            <span>→</span>
+                        </a>
+                    </article>
+                </template>
+            </div>
         </div>
     </div>
+    
     <script src="app.js"></script>
 </body>
 </html>
