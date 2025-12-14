@@ -75,7 +75,7 @@ function app() {
         // Estrategia 2: buscar <link> en HTML
         async (url) => {
           try {
-            const proxyUrl = `https://tu-worker.rss-proxy.workers.dev/?url=${encodeURIComponent(url)}&mode=html`;
+            const proxyUrl = `https://proto-nexus.marcosba.workers.dev/?url=${encodeURIComponent(url)}&mode=html`;
             const response = await fetch(proxyUrl);
             const html = await response.text();
             
