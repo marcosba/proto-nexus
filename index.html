@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Proto-Nexus - Tu red de blogs</title>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body x-data="app()" x-init="init()">
+    <div class="container">
+        <!-- Sidebar: Añadir blogs y suscripciones -->
+        <div class="sidebar">
+            <h3>+ Añadir Blog</h3>
+            <input x-model="newBlogUrl" placeholder="URL del blog (ej: mi-blog.blogspot.com)">
+            <button @click="addBlog()">Añadir</button>
+            
+            <h3>Tus Blogs</h3>
+            <template x-for="blog in blogs" :key="blog.id">
+                <div class="blog-item">
+                    <span x-text="blog.title"></span>
+                    <button @click="unsubscribe(blog.id)">×</button>
+                </div>
+            </template>
+        </div>
+
+        <!-- Feed principal -->
+        <div class="feed">
+            <h1>Proto-Nexus</h1>
+            <template x-for="post in posts" :key="post.id">
+                <article class="post">
+                    <h2 x-text="post.title"></h2>
+                    <div class="meta">
+                        <a :href="post.blogUrl" x-text="post.author"></a> · 
+                        <span x-text="new Date(post.date).toLocaleDateString()"></span>
+                    </div>
+                    <div x-html="post.excerpt"></div>
+                    <a :href="post.link" target="_blank">Leer completo →</a>
+                </article>
+            </template>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

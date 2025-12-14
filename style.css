@@ -1,0 +1,10 @@
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; }
+.container { display: flex; height: 100vh; }
+.sidebar { width: 300px; border-right: 1px solid #e0e0e0; padding: 20px; overflow-y: auto; }
+.sidebar input { width: 100%; padding: 8px; margin: 5px 0; }
+.sidebar button { width: 100%; padding: 8px; background: #007cba; color: white; border: none; }
+.blog-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+.feed { flex: 1; padding: 20px; overflow-y: auto; }
+.post { margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #f0f0f0; }
+.post a { color: #007cba; text-decoration: none; }
+.meta { color: #666; font-size: 0.9em; margin: 5px 0; }
